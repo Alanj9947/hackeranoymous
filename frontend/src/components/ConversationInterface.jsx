@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef } from 'react';
-import { Mic, Phone, Send, Loader } from 'lucide-react';
+import { Mic, Phone } from 'lucide-react';
 import { useConversation } from '../hooks/useConversation';
 
 const formatTime = (seconds) => {

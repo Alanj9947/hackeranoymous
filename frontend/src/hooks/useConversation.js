@@ -27,8 +27,12 @@ export const useConversation = (agentId) => {
   const getWsUrl = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const apiUrl = import.meta.env.VITE_API_URL || `${protocol}//${host}`;
-    return `${apiUrl.replace('http', 'ws')}/api/v1/ws/talk-to-agent/${agentId}`;
+    let apiUrl = import.meta.env.VITE_API_URL || `${protocol}//${host}`;
+    
+    // Replace http:// with ws:// or https:// with wss://
+    apiUrl = apiUrl.replace(/^https?:\/\//, '');
+    
+    return `${protocol}//${apiUrl}/api/v1/ws/talk-to-agent/${agentId}`;
   }, [agentId]);
 
   // Start recording audio
@@ -199,10 +203,14 @@ export const useConversation = (agentId) => {
       wsRef.current = new WebSocket(wsUrl);
       wsRef.current.binaryType = 'arraybuffer';
 
-      wsRef.current.onopen = async () => {
+      wsRef.current.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
-        await startRecording();
+        // Start recording (fire and forget)
+        startRecording().catch((err) => {
+          console.error('Error starting recording:', err);
+          setError(err.message || 'Failed to start recording');
+        });
 
         // Start call timer
         timerIntervalRef.current = setInterval(() => {
@@ -264,7 +272,7 @@ export const useConversation = (agentId) => {
         endConversation();
       }
     };
-  }, []);
+  }, [isConnected, endConversation]);
 
   return {
     isConnected,
