@@ -457,7 +457,7 @@ export function useCreateScheduledExport() {
 
 // ─── Calls (extras) ─────────────────────────────────────────
 
-export function useCallRecordingUrl(callId: string | undefined) {
+export function getCallRecordingUrl(callId: string | undefined) {
   return `/api/v1/calls/${callId}/recording`;
 }
 

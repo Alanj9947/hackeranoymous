@@ -5,18 +5,18 @@ Supports listing, provisioning, and releasing Twilio phone numbers.
 
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_company_id, get_current_active_user
+from app.api.deps import get_company_id
 from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.agent import Agent
-from app.models.user import User
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -46,6 +46,13 @@ class AssignPhoneNumberRequest(BaseModel):
     agent_id: UUID
 
 
+def _build_twilio_client():
+    """Create a Twilio REST client (synchronous, call via run_in_executor)."""
+    from twilio.rest import Client as TwilioClient
+
+    return TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+
+
 @router.get("", response_model=List[PhoneNumberResponse])
 async def list_phone_numbers(
     db: AsyncSession = Depends(get_db),
@@ -56,16 +63,19 @@ async def list_phone_numbers(
         raise HTTPException(status_code=503, detail="Twilio not configured")
 
     try:
-        from twilio.rest import Client as TwilioClient
+        loop = asyncio.get_event_loop()
 
-        client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        incoming_numbers = client.incoming_phone_numbers.list()
+        def _fetch_numbers():
+            client = _build_twilio_client()
+            return client.incoming_phone_numbers.list()
+
+        incoming_numbers = await loop.run_in_executor(None, _fetch_numbers)
 
         # Load agent assignments
         agents_result = await db.execute(select(Agent).where(Agent.company_id == company_id))
         agents = agents_result.scalars().all()
 
-        # Build a map: phone_number -> agent_id
+        # Map: phone_number -> agent_id
         number_to_agent: dict[str, str] = {}
         for agent in agents:
             for num in (agent.phone_numbers or []):
@@ -88,6 +98,8 @@ async def list_phone_numbers(
                 )
             )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("list_phone_numbers_error", error=str(e))
         raise HTTPException(status_code=502, detail=f"Twilio error: {str(e)}")
@@ -105,14 +117,16 @@ async def search_available_numbers(
         raise HTTPException(status_code=503, detail="Twilio not configured")
 
     try:
-        from twilio.rest import Client as TwilioClient
+        loop = asyncio.get_event_loop()
 
-        client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        kwargs = {"limit": limit, "voice_enabled": True}
-        if area_code:
-            kwargs["area_code"] = area_code
+        def _search():
+            client = _build_twilio_client()
+            kwargs: dict = {"limit": limit, "voice_enabled": True}
+            if area_code:
+                kwargs["area_code"] = area_code
+            return client.available_phone_numbers(country).local.list(**kwargs)
 
-        numbers = client.available_phone_numbers(country).local.list(**kwargs)
+        numbers = await loop.run_in_executor(None, _search)
         return [
             PhoneNumberSearchResult(
                 phone_number=n.phone_number,
@@ -122,6 +136,8 @@ async def search_available_numbers(
             )
             for n in numbers
         ]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("search_numbers_error", error=str(e))
         raise HTTPException(status_code=502, detail=f"Twilio error: {str(e)}")
@@ -147,22 +163,24 @@ async def assign_phone_number(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     try:
-        from twilio.rest import Client as TwilioClient
-
-        client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        # Get the phone number's actual number string
-        num_resource = client.incoming_phone_numbers(phone_number_sid).fetch()
-        phone_number = num_resource.phone_number
-
-        # Configure webhook to our platform
+        loop = asyncio.get_event_loop()
         webhook_url = f"{settings.TWILIO_WEBHOOK_BASE_URL}/webhooks/twilio/voice"
         status_callback = f"{settings.TWILIO_WEBHOOK_BASE_URL}/webhooks/twilio/status"
-        client.incoming_phone_numbers(phone_number_sid).update(
-            voice_url=webhook_url,
-            voice_method="POST",
-            status_callback=status_callback,
-            status_callback_method="POST",
-        )
+
+        def _assign():
+            client = _build_twilio_client()
+            num_resource = client.incoming_phone_numbers(phone_number_sid).fetch()
+            phone_number = num_resource.phone_number
+            # Configure webhook to our platform
+            client.incoming_phone_numbers(phone_number_sid).update(
+                voice_url=webhook_url,
+                voice_method="POST",
+                status_callback=status_callback,
+                status_callback_method="POST",
+            )
+            return phone_number
+
+        phone_number = await loop.run_in_executor(None, _assign)
 
         # Update agent's phone_numbers list
         numbers = list(agent.phone_numbers or [])
@@ -172,6 +190,8 @@ async def assign_phone_number(
             await db.commit()
 
         logger.info("phone_number_assigned", number=phone_number, agent_id=str(agent.id))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("assign_number_error", error=str(e))
         raise HTTPException(status_code=502, detail=f"Twilio error: {str(e)}")
@@ -188,11 +208,13 @@ async def unassign_phone_number(
         raise HTTPException(status_code=503, detail="Twilio not configured")
 
     try:
-        from twilio.rest import Client as TwilioClient
+        loop = asyncio.get_event_loop()
 
-        client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        num_resource = client.incoming_phone_numbers(phone_number_sid).fetch()
-        phone_number = num_resource.phone_number
+        def _fetch_number():
+            client = _build_twilio_client()
+            return client.incoming_phone_numbers(phone_number_sid).fetch().phone_number
+
+        phone_number = await loop.run_in_executor(None, _fetch_number)
 
         # Remove from all agents
         agents_result = await db.execute(select(Agent).where(Agent.company_id == company_id))
@@ -204,6 +226,8 @@ async def unassign_phone_number(
 
         await db.commit()
         logger.info("phone_number_unassigned", number=phone_number)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("unassign_number_error", error=str(e))
         raise HTTPException(status_code=502, detail=f"Twilio error: {str(e)}")

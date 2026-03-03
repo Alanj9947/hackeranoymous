@@ -187,7 +187,18 @@ async def export_to_csv(
     query = select(ExtractedCallData).where(ExtractedCallData.company_id == company_id)
 
     if call_ids:
-        ids = [UUID(c.strip()) for c in call_ids.split(",") if c.strip()]
+        ids: list[UUID] = []
+        for raw_id in call_ids.split(","):
+            value = raw_id.strip()
+            if not value:
+                continue
+            try:
+                ids.append(UUID(value))
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid UUID in call_ids: {value}",
+                )
         if ids:
             query = query.where(ExtractedCallData.call_id.in_(ids))
 

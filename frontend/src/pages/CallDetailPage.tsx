@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useCall, useCallTranscript, useTriggerExtraction, useCallRecordingUrl } from '@/hooks/use-api';
+import { useCall, useCallTranscript, useTriggerExtraction, getCallRecordingUrl } from '@/hooks/use-api';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -13,7 +13,7 @@ export default function CallDetailPage() {
   const { data: call, isLoading } = useCall(id);
   const { data: transcript } = useCallTranscript(id);
   const triggerExtraction = useTriggerExtraction();
-  const recordingUrl = useCallRecordingUrl(id);
+  const recordingUrl = getCallRecordingUrl(id);
 
   if (isLoading) return <PageLoader />;
   if (!call) return <p>Call not found</p>;

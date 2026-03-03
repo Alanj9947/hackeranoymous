@@ -41,7 +41,7 @@ async def _get_custom_server_config():
                     CustomServerConfig.agent_id == None,  # noqa: E711
                 )
             )
-            config = result.scalar_one_or_none()
+            config = result.scalars().first()
             if config and config.endpoint:
                 return {
                     "endpoint": config.endpoint.rstrip("/"),

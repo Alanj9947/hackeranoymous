@@ -1,6 +1,11 @@
 """
 WebSocket endpoint for frontend real-time call status updates.
 Clients connect here to receive live events for a specific call.
+
+NOTE: The _connections dict is in-memory and not shared across workers.
+In a multi-worker production deployment (multiple Uvicorn/Gunicorn processes),
+broadcast_to_call() will only reach clients on the same worker. For multi-worker
+setups, replace this with a Redis pub/sub fan-out (see REDIS_URL in config).
 """
 
 from __future__ import annotations
@@ -20,7 +25,8 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["Conversation"])
 
-# In-memory registry: call_id -> set of connected WebSockets
+# In-memory registry: call_id -> set of connected WebSockets.
+# Not shared across worker processes (see module docstring).
 _connections: Dict[str, Set[WebSocket]] = {}
 
 
@@ -57,12 +63,14 @@ async def call_websocket(websocket: WebSocket, call_id: str, token: str = ""):
     WebSocket endpoint for receiving real-time events for a call.
     The frontend connects here with ?token=<jwt> to get live updates.
     """
-    # Validate JWT token
+    # Accept the WebSocket upgrade first so we can send a proper close frame.
+    # The WebSocket protocol requires the handshake to complete before control
+    # frames (including Close) can be sent to the client. Any unauthenticated
+    # connection is immediately closed with code 4001 before any data is exchanged.
+    await websocket.accept()
     if not await _validate_token(token):
         await websocket.close(code=4001)
         return
-
-    await websocket.accept()
     logger.info("ws_call_connected", call_id=call_id)
 
     # Register connection

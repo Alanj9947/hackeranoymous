@@ -8,7 +8,6 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,32 +144,30 @@ async def download_recording(
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
 
-    # If we have an S3 key, generate a presigned URL or stream from S3
+    # If we have an S3 key, generate a presigned URL and redirect (non-blocking)
     if call.recording_s3_key:
         try:
+            import asyncio
             import boto3
-            from botocore.exceptions import ClientError
 
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=settings.S3_ENDPOINT,
-                aws_access_key_id=settings.S3_ACCESS_KEY,
-                aws_secret_access_key=settings.S3_SECRET_KEY,
-                region_name=settings.S3_REGION,
-            )
-            # Stream the object from S3
-            s3_obj = s3.get_object(Bucket=settings.S3_BUCKET_RECORDINGS, Key=call.recording_s3_key)
-            filename = f"recording_{call_id}.mp3"
+            def _presign():
+                s3 = boto3.client(
+                    "s3",
+                    endpoint_url=settings.S3_ENDPOINT,
+                    aws_access_key_id=settings.S3_ACCESS_KEY,
+                    aws_secret_access_key=settings.S3_SECRET_KEY,
+                    region_name=settings.S3_REGION,
+                )
+                return s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": settings.S3_BUCKET_RECORDINGS, "Key": call.recording_s3_key},
+                    ExpiresIn=3600,
+                )
 
-            def _stream():
-                for chunk in s3_obj["Body"].iter_chunks(chunk_size=65536):
-                    yield chunk
+            presigned_url = await asyncio.get_event_loop().run_in_executor(None, _presign)
+            from fastapi.responses import RedirectResponse
 
-            return StreamingResponse(
-                _stream(),
-                media_type="audio/mpeg",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-            )
+            return RedirectResponse(url=presigned_url)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Could not retrieve recording: {str(e)}")
 
