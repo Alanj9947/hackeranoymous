@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from uuid import uuid4, UUID
 
@@ -10,10 +11,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
+from app.core.config import get_settings
 from app.core.websocket import connection_manager
 from app.models import Agent, Conversation, ConversationMessage
+from app.services.conversation_service import ConversationService
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(tags=["conversation"])
 
@@ -117,10 +121,31 @@ async def websocket_conversation(
             connection_manager.disconnect(conversation_id)
             return
         
+        # ── Initialize AI Services ─────────────────────────────
+        
+        try:
+            conversation_service = ConversationService(
+                openai_api_key=settings.OPENAI_API_KEY,
+                elevenlabs_api_key=settings.ELEVENLABS_API_KEY,
+            )
+            logger.info("AI services initialized")
+        except Exception as e:
+            logger.error(f"Error initializing AI services: {str(e)}")
+            await connection_manager.send_json(
+                conversation_id,
+                {
+                    "type": "error",
+                    "message": "Failed to initialize AI services"
+                }
+            )
+            connection_manager.disconnect(conversation_id)
+            return
+        
         # ── Audio Buffering & Processing ───────────────────────
         
         audio_buffer = b""
         buffer_threshold = 32000  # ~2 seconds at 16kHz
+        messages_history = []  # Local conversation history
         
         while True:
             try:
@@ -147,41 +172,128 @@ async def websocket_conversation(
                         }
                     )
                     
-                    # TODO: Process audio through Whisper -> GPT-4 -> ElevenLabs
-                    # For now, send placeholder response
+                    # ── Process audio through AI pipeline ──
                     logger.info(f"Processing audio chunk: {len(audio_buffer)} bytes")
                     
-                    # Save placeholder user message to DB
-                    user_message = ConversationMessage(
-                        conversation_id=conversation.id,
-                        speaker="user",
-                        message="[Audio received]",
-                        timestamp=datetime.utcnow().isoformat()
-                    )
-                    db.add(user_message)
-                    
-                    # Send placeholder transcript
-                    await connection_manager.send_json(
-                        conversation_id,
-                        {
-                            "type": "transcript",
-                            "speaker": "user",
-                            "text": "[Audio processing...]"
+                    try:
+                        # Build agent config from database
+                        agent_config = {
+                            "system_prompt": agent.system_prompt.get("personality", 
+                                "You are a helpful assistant."),
+                            "temperature": 0.7,
+                            "max_tokens": 500,
+                            "voice_id": agent.voice_settings.get("voiceId", 
+                                "21m00Tcm4TlvDq8ikWAM"),
+                            "voice_speed": agent.voice_settings.get("speed", 1.0),
                         }
-                    )
+                        
+                        # Process audio through full pipeline
+                        pipeline_result = await conversation_service.process_audio_chunk_with_fallback(
+                            audio_buffer,
+                            messages_history,
+                            agent_config,
+                            language="en",
+                        )
+                        
+                        # Extract results
+                        transcript_user = pipeline_result.get("transcript_user", "")
+                        response_text = pipeline_result.get("response_text", "")
+                        response_audio = pipeline_result.get("response_audio")
+                        latency_ms = pipeline_result.get("latency_ms", 0)
+                        
+                        logger.info(f"Pipeline result: user='{transcript_user}', "
+                                   f"agent='{response_text}', latency={latency_ms:.0f}ms")
+                        
+                        # Add to local history for context
+                        messages_history.append({
+                            "speaker": "user",
+                            "message": transcript_user
+                        })
+                        messages_history.append({
+                            "speaker": "agent",
+                            "message": response_text
+                        })
+                        
+                        # Save user message to database
+                        user_message = ConversationMessage(
+                            conversation_id=conversation.id,
+                            speaker="user",
+                            message=transcript_user,
+                            timestamp=datetime.utcnow().isoformat()
+                        )
+                        db.add(user_message)
+                        
+                        # Send user transcript to client
+                        await connection_manager.send_json(
+                            conversation_id,
+                            {
+                                "type": "transcript",
+                                "speaker": "user",
+                                "text": transcript_user
+                            }
+                        )
+                        
+                        # Save agent message to database
+                        agent_message = ConversationMessage(
+                            conversation_id=conversation.id,
+                            speaker="agent",
+                            message=response_text,
+                            timestamp=datetime.utcnow().isoformat()
+                        )
+                        db.add(agent_message)
+                        
+                        # Send agent transcript to client
+                        await connection_manager.send_json(
+                            conversation_id,
+                            {
+                                "type": "transcript",
+                                "speaker": "agent",
+                                "text": response_text
+                            }
+                        )
+                        
+                        # Send audio if available
+                        if response_audio:
+                            logger.info(f"Sending audio response: {len(response_audio)} bytes")
+                            await connection_manager.send_bytes(
+                                conversation_id,
+                                response_audio
+                            )
+                        else:
+                            # Send status if audio not available
+                            await connection_manager.send_json(
+                                conversation_id,
+                                {
+                                    "type": "status",
+                                    "message": "Text response only (audio unavailable)"
+                                }
+                            )
+                        
+                        # Commit to database
+                        await db.commit()
+                        logger.info(f"Conversation messages saved to DB")
+                        
+                    except Exception as process_err:
+                        logger.error(f"Error processing audio: {str(process_err)}")
+                        await connection_manager.send_json(
+                            conversation_id,
+                            {
+                                "type": "error",
+                                "message": f"Error processing audio: {str(process_err)}"
+                            }
+                        )
+                        # Continue listening instead of breaking
                     
                     # Reset buffer
                     audio_buffer = b""
                     
-                    await db.commit()
-                    
             except Exception as e:
-                logger.error(f"Error processing audio: {str(e)}")
+                logger.error(f"Error in main loop: {str(e)}")
                 await connection_manager.send_json(
                     conversation_id,
                     {
                         "type": "error",
-                        "message": f"Error processing audio: {str(e)}"
+                        "message": f"Error: {str(e)}"
                     }
                 )
                 break

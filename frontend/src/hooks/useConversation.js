@@ -142,7 +142,8 @@ export const useConversation = (agentId) => {
   const handleMessage = useCallback(
     (event) => {
       if (event.data instanceof ArrayBuffer) {
-        // Binary audio data - play it
+        // Binary audio data - play it directly
+        console.log('Received audio response:', event.data.byteLength, 'bytes');
         playAudio(event.data);
       } else if (typeof event.data === 'string') {
         try {
@@ -152,10 +153,19 @@ export const useConversation = (agentId) => {
             case 'connected':
               console.log('Connected to agent:', message.agent_name);
               conversationIdRef.current = message.conversation_id;
-              // Optionally add system message
+              // Optionally show connection message
+              setTranscript((prev) => [
+                ...prev,
+                {
+                  speaker: 'system',
+                  text: message.message,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
               break;
 
             case 'transcript':
+              // User or agent message
               console.log('Transcript:', message.speaker, message.text);
               setTranscript((prev) => [
                 ...prev,
@@ -168,6 +178,7 @@ export const useConversation = (agentId) => {
               break;
 
             case 'status':
+              // Status update (processing, etc)
               console.log('Status:', message.message);
               if (message.processing) {
                 setIsListening(false);
@@ -175,6 +186,7 @@ export const useConversation = (agentId) => {
               break;
 
             case 'error':
+              // Error message
               console.error('Server error:', message.message);
               setError(message.message);
               break;
