@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed)
 
     # ── Routes ─────────────────────────────────────────────
-    from app.api.routes import auth, agents, calls, extraction, exports, custom_server, webhooks, health
+    from app.api.routes import auth, agents, calls, extraction, exports, custom_server, webhooks, health, conversation, phone_numbers
 
     app.include_router(health.router)
     app.include_router(auth.router, prefix="/api/v1")
@@ -67,7 +67,9 @@ def create_app() -> FastAPI:
     app.include_router(extraction.router, prefix="/api/v1")
     app.include_router(exports.router, prefix="/api/v1")
     app.include_router(custom_server.router, prefix="/api/v1")
+    app.include_router(phone_numbers.router, prefix="/api/v1")
     app.include_router(webhooks.router)  # no prefix – Twilio needs exact path
+    app.include_router(conversation.router)  # WebSocket – no API prefix
 
     # ── WebSocket for media streaming ──────────────────────
     from app.services.media_stream import media_stream_ws

@@ -81,6 +81,26 @@ class SentimentResponse(BaseModel):
     processing_time_ms: int
 
 
+class ChatMessage(BaseModel):
+    role: str  # system | user | assistant
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    model: Optional[str] = None
+    temperature: float = Field(0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(500, ge=1, le=4096)
+    request_id: Optional[str] = ""
+
+
+class ChatResponse(BaseModel):
+    request_id: str
+    content: str
+    model: str
+    processing_time_ms: int
+
+
 class BatchExtractionRequest(BaseModel):
     requests: List[ExtractionRequest]
 
@@ -132,6 +152,28 @@ async def ollama_generate(prompt: str, system: str = "", temperature: float = 0.
         resp = await client.post(f"{settings.ollama_base_url}/api/generate", json=payload)
         resp.raise_for_status()
         return resp.json().get("response", "")
+
+
+async def ollama_chat(messages: list, model: str, temperature: float = 0.7, max_tokens: int = 500) -> str:
+    """Call Ollama /api/chat endpoint with a messages list."""
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
+        resp = await client.post(f"{settings.ollama_base_url}/api/chat", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        message = data.get("message")
+        if not isinstance(message, dict):
+            logger.warning("ollama_chat_unexpected_response", response_keys=list(data.keys()))
+            return ""
+        return message.get("content", "")
 
 
 async def check_ollama() -> tuple[bool, bool]:
@@ -217,6 +259,42 @@ async def health_check():
         uptime_seconds=int(time.monotonic() - _start_time),
         active_requests=_active_requests,
     )
+
+
+@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
+async def chat_completion(req: ChatRequest):
+    """Generate a conversational AI response using the local Ollama model."""
+    global _active_requests
+
+    async with semaphore:
+        _active_requests += 1
+        start = time.monotonic()
+
+        try:
+            model = req.model or settings.model_name
+            messages = [{"role": m.role, "content": m.content} for m in req.messages]
+            content = await ollama_chat(
+                messages=messages,
+                model=model,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+            )
+            elapsed = int((time.monotonic() - start) * 1000)
+
+            return ChatResponse(
+                request_id=req.request_id or str(uuid.uuid4()),
+                content=content,
+                model=model,
+                processing_time_ms=elapsed,
+            )
+        except httpx.HTTPError as e:
+            logger.error("ollama_chat_error", error=str(e))
+            raise HTTPException(status_code=502, detail=f"Ollama error: {str(e)}")
+        except Exception as e:
+            logger.error("chat_error", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            _active_requests -= 1
 
 
 @app.post("/extract-data", response_model=ExtractionResponse, dependencies=[Depends(verify_api_key)])

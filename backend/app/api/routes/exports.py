@@ -170,3 +170,58 @@ async def list_export_history(
         .limit(per_page)
     )
     return [ExportHistoryResponse.model_validate(e) for e in result.scalars().all()]
+
+
+@router.get("/csv")
+async def export_to_csv(
+    call_ids: Optional[str] = Query(None, description="Comma-separated call UUIDs to include"),
+    db: AsyncSession = Depends(get_db),
+    company_id: UUID = Depends(get_company_id),
+):
+    """Export extracted data to CSV and return as a downloadable file."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.models.extraction import ExtractedCallData
+
+    query = select(ExtractedCallData).where(ExtractedCallData.company_id == company_id)
+
+    if call_ids:
+        ids = [UUID(c.strip()) for c in call_ids.split(",") if c.strip()]
+        if ids:
+            query = query.where(ExtractedCallData.call_id.in_(ids))
+
+    result = await db.execute(query.order_by(ExtractedCallData.created_at.desc()))
+    items = result.scalars().all()
+
+    if not items:
+        raise HTTPException(status_code=404, detail="No extracted data found")
+
+    # Collect all unique keys from extracted_data dicts (dict preserves insertion order in Python 3.7+)
+    all_keys: dict[str, None] = {}
+    for f in ["call_id", "agent_id", "created_at", "confidence_score", "extraction_method"]:
+        all_keys[f] = None
+    for item in items:
+        for k in (item.extracted_data or {}).keys():
+            all_keys[k] = None
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(all_keys), extrasaction="ignore")
+    writer.writeheader()
+    for item in items:
+        row: dict = {
+            "call_id": str(item.call_id),
+            "agent_id": str(item.agent_id),
+            "created_at": str(item.created_at),
+            "confidence_score": item.confidence_score,
+            "extraction_method": item.extraction_method,
+            **(item.extracted_data or {}),
+        }
+        writer.writerow(row)
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="export.csv"'},
+    )

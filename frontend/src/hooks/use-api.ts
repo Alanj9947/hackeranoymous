@@ -178,7 +178,12 @@ type CustomServerHealth = {
   endpoint: string;
   last_check?: string | null;
   response_time?: number | null;
-  model_loaded?: string | null;
+  // VPS Ollama-specific
+  ollama_connected?: boolean | null;
+  model_loaded?: boolean | null;
+  model_name?: string | null;
+  active_requests?: number | null;
+  // Generic
   models_available?: string[] | null;
   gpu_available?: boolean | null;
   gpu_memory_usage?: string | null;
@@ -450,6 +455,31 @@ export function useCreateScheduledExport() {
   });
 }
 
+// ─── Calls (extras) ─────────────────────────────────────────
+
+export function useCallRecordingUrl(callId: string | undefined) {
+  return `/api/v1/calls/${callId}/recording`;
+}
+
+export function useExportCsv() {
+  return useMutation({
+    mutationFn: async (callIds?: string[]) => {
+      const params = callIds?.length ? `?call_ids=${callIds.join(',')}` : '';
+      const response = await api.get(`/export/csv${params}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data as BlobPart]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'export.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast.success('CSV downloaded'),
+    onError: () => toast.error('CSV export failed'),
+  });
+}
+
 // ─── Custom Server ──────────────────────────────────────────
 
 export function useCustomServerConfig() {
@@ -478,5 +508,69 @@ export function useCustomServerHealth() {
     queryFn: () => api.get<CustomServerHealth>('/custom-server/health').then((r) => r.data),
     retry: false,
     refetchInterval: 30_000,
+  });
+}
+
+// ─── Phone Numbers ───────────────────────────────────────────
+
+type PhoneNumber = {
+  sid: string;
+  phone_number: string;
+  friendly_name: string;
+  capabilities: Record<string, boolean>;
+  date_created?: string | null;
+  assigned_agent_id?: string | null;
+};
+
+type PhoneNumberSearchResult = {
+  phone_number: string;
+  friendly_name: string;
+  region?: string | null;
+  postal_code?: string | null;
+  monthly_cost?: string | null;
+};
+
+export function usePhoneNumbers() {
+  return useQuery<PhoneNumber[]>({
+    queryKey: ['phoneNumbers'],
+    queryFn: () => api.get<PhoneNumber[]>('/phone-numbers').then((r) => r.data),
+    retry: false,
+  });
+}
+
+export function useSearchPhoneNumbers(areaCode?: string) {
+  return useQuery<PhoneNumberSearchResult[]>({
+    queryKey: ['phoneNumberSearch', areaCode],
+    queryFn: () =>
+      api
+        .get<PhoneNumberSearchResult[]>('/phone-numbers/search', {
+          params: { area_code: areaCode },
+        })
+        .then((r) => r.data),
+    enabled: false, // triggered manually
+    retry: false,
+  });
+}
+
+export function useAssignPhoneNumber() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sid, agentId }: { sid: string; agentId: string }) =>
+      api.post(`/phone-numbers/${sid}/assign`, { agent_id: agentId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['phoneNumbers'] });
+      toast.success('Phone number assigned');
+    },
+  });
+}
+
+export function useUnassignPhoneNumber() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sid: string) => api.delete(`/phone-numbers/${sid}/assign`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['phoneNumbers'] });
+      toast.success('Phone number unassigned');
+    },
   });
 }

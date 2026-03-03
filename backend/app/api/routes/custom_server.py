@@ -42,7 +42,7 @@ async def configure_server(
     if config:
         # Update existing
         config.endpoint = body.endpoint
-        config.api_key_encrypted = encrypt_value(body.api_key)
+        config.api_key_encrypted = encrypt_value(body.api_key) if body.api_key else config.api_key_encrypted
         config.model_name = body.model_name
         config.timeout_seconds = body.timeout_seconds
         config.max_retries = body.max_retries
@@ -53,7 +53,7 @@ async def configure_server(
             company_id=company_id,
             agent_id=body.agent_id,
             endpoint=body.endpoint,
-            api_key_encrypted=encrypt_value(body.api_key),
+            api_key_encrypted=encrypt_value(body.api_key) if body.api_key else None,
             model_name=body.model_name,
             timeout_seconds=body.timeout_seconds,
             max_retries=body.max_retries,
@@ -95,11 +95,16 @@ async def get_server_health(
     try:
         health = await client.health()
         return CustomServerHealthResponse(
-            status="healthy",
+            status=health.get("status", "healthy"),
             endpoint=config.endpoint,
             last_check=config.last_health_check,
             response_time=health.get("response_time"),
+            # VPS Ollama-specific fields
+            ollama_connected=health.get("ollama_connected"),
             model_loaded=health.get("model_loaded"),
+            model_name=health.get("model_name"),
+            active_requests=health.get("active_requests"),
+            # Generic fields
             models_available=health.get("models_available"),
             gpu_available=health.get("gpu_available"),
             gpu_memory_usage=health.get("gpu_memory_usage"),
@@ -107,6 +112,7 @@ async def get_server_health(
             uptime=health.get("uptime"),
         )
     except Exception as e:
+        logger.warning("custom_server_health_check_failed", endpoint=config.endpoint, error=str(e))
         return CustomServerHealthResponse(
             status="unhealthy",
             endpoint=config.endpoint,

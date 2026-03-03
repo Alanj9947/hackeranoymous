@@ -5,6 +5,7 @@ import {
   useExportHistory,
   useScheduledExports,
   useCreateScheduledExport,
+  useExportCsv,
   useAgents,
 } from '@/hooks/use-api';
 import { Button } from '@/components/ui/Button';
@@ -12,7 +13,7 @@ import { Input } from '@/components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { PageLoader } from '@/components/ui/Spinner';
-import { FileSpreadsheet, Table2, Download, Plus } from 'lucide-react';
+import { FileSpreadsheet, Table2, Download, Plus, FileText } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { AxiosError } from 'axios';
 import toast from 'react-hot-toast';
@@ -21,6 +22,7 @@ export default function ExportsPage() {
   const { data: agents } = useAgents();
   const exportExcel = useExportExcel();
   const exportSheets = useExportSheets();
+  const exportCsv = useExportCsv();
   const { data: history, isLoading: histLoading } = useExportHistory();
   const { data: schedules } = useScheduledExports();
   const createSchedule = useCreateScheduledExport();
@@ -39,9 +41,7 @@ export default function ExportsPage() {
   const handleExcelExport = async () => {
     try {
       await exportExcel.mutateAsync({
-        agent_id: agentId || undefined,
         template,
-        date_range: { days: 30 },
       });
     } catch (err: unknown) {
       const message = err instanceof AxiosError ? err.response?.data?.detail : 'Export failed';
@@ -52,13 +52,22 @@ export default function ExportsPage() {
   const handleSheetsExport = async () => {
     try {
       await exportSheets.mutateAsync({
-        agent_id: agentId || undefined,
-        spreadsheet_title: sheetTitle || 'Voice Agent Export',
+        action: 'create',
+        template,
         share_with: shareEmail ? [shareEmail] : [],
       });
     } catch (err: unknown) {
       const message = err instanceof AxiosError ? err.response?.data?.detail : 'Export failed';
       toast.error(message || 'Export failed');
+    }
+  };
+
+  const handleCsvExport = async () => {
+    try {
+      await exportCsv.mutateAsync();
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError ? err.response?.data?.detail : 'CSV export failed';
+      toast.error(message || 'CSV export failed');
     }
   };
 
@@ -81,7 +90,7 @@ export default function ExportsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Exports</h1>
-        <p className="text-gray-500">Export call data to Excel or Google Sheets</p>
+        <p className="text-gray-500">Export call data to Excel, Google Sheets, or CSV</p>
       </div>
 
       {/* Tabs */}
@@ -104,7 +113,7 @@ export default function ExportsPage() {
       </div>
 
       {tab === 'export' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Excel Export */}
           <Card>
             <CardHeader>
@@ -114,19 +123,6 @@ export default function ExportsPage() {
               <CardDescription>Download as .xlsx file</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Agent (optional)</label>
-                <select
-                  className="w-full h-10 rounded-md border border-gray-300 px-3 text-sm"
-                  value={agentId}
-                  onChange={(e) => setAgentId(e.target.value)}
-                >
-                  <option value="">All agents</option>
-                  {agentList.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-              </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Template</label>
                 <select
@@ -156,14 +152,6 @@ export default function ExportsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Spreadsheet Title</label>
-                <Input
-                  value={sheetTitle}
-                  onChange={(e) => setSheetTitle(e.target.value)}
-                  placeholder="Voice Agent Export"
-                />
-              </div>
-              <div>
                 <label className="block text-sm font-medium mb-1">Share with (email)</label>
                 <Input
                   type="email"
@@ -175,6 +163,23 @@ export default function ExportsPage() {
               <Button onClick={handleSheetsExport} disabled={exportSheets.isPending} className="w-full">
                 <Table2 size={16} className="mr-2" />
                 {exportSheets.isPending ? 'Exporting…' : 'Export to Sheets'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* CSV Export */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText size={18} className="text-orange-600" /> CSV Export
+              </CardTitle>
+              <CardDescription>Download all extracted data as CSV</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-gray-500">Exports all extracted call data to a CSV file for use in spreadsheet tools.</p>
+              <Button onClick={handleCsvExport} disabled={exportCsv.isPending} className="w-full" variant="outline">
+                <Download size={16} className="mr-2" />
+                {exportCsv.isPending ? 'Downloading…' : 'Download CSV'}
               </Button>
             </CardContent>
           </Card>
@@ -193,29 +198,21 @@ export default function ExportsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-gray-50 text-left text-gray-500">
-                      <th className="p-3 font-medium">Type</th>
+                      <th className="p-3 font-medium">Destination</th>
                       <th className="p-3 font-medium">Status</th>
                       <th className="p-3 font-medium">Rows</th>
                       <th className="p-3 font-medium">Date</th>
-                      <th className="p-3 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {historyList.map((h: any) => (
                       <tr key={h.id} className="border-b last:border-0">
-                        <td className="p-3">{h.export_type}</td>
+                        <td className="p-3">{h.destination || h.export_type}</td>
                         <td className="p-3">
-                          <Badge variant={h.status === 'completed' ? 'success' : 'warning'}>{h.status}</Badge>
+                          <Badge variant={h.status === 'success' ? 'success' : 'warning'}>{h.status}</Badge>
                         </td>
-                        <td className="p-3">{h.row_count || '—'}</td>
+                        <td className="p-3">{h.rows_exported ?? '—'}</td>
                         <td className="p-3 text-gray-500">{h.created_at && formatDate(h.created_at)}</td>
-                        <td className="p-3">
-                          {h.file_path && (
-                            <Button variant="ghost" size="sm">
-                              <Download size={14} className="mr-1" /> Download
-                            </Button>
-                          )}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -269,8 +266,8 @@ export default function ExportsPage() {
                           <td className="p-3">{s.frequency}</td>
                           <td className="p-3">{s.destination}</td>
                           <td className="p-3">
-                            <Badge variant={s.is_active ? 'success' : 'outline'}>
-                              {s.is_active ? 'Active' : 'Inactive'}
+                            <Badge variant={s.enabled ? 'success' : 'outline'}>
+                              {s.enabled ? 'Active' : 'Inactive'}
                             </Badge>
                           </td>
                         </tr>

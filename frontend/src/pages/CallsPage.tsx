@@ -32,7 +32,7 @@ export default function CallsPage() {
       return;
     }
     try {
-      await initiate.mutateAsync({ agent_id: dialAgentId, to_phone_number: dialPhone });
+      await initiate.mutateAsync({ agent_id: dialAgentId, to_number: dialPhone });
       setShowDialer(false);
       setDialPhone('');
     } catch (err: unknown) {
@@ -124,7 +124,7 @@ export default function CallsPage() {
                 <tbody>
                   {list.map((call: any) => (
                     <tr key={call.id} className="border-b last:border-0 hover:bg-gray-50">
-                      <td className="p-3 font-mono text-xs">{call.from_phone || call.to_phone || '—'}</td>
+                      <td className="p-3 font-mono text-xs">{call.from_number || call.to_number || '—'}</td>
                       <td className="p-3">
                         <Badge variant={call.direction === 'inbound' ? 'default' : 'outline'}>
                           {call.direction}

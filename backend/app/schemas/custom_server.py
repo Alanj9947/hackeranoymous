@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 class CustomServerConfigCreate(BaseModel):
     endpoint: str = Field(..., min_length=5)
-    api_key: str = Field(..., min_length=8)
+    api_key: str = Field("", min_length=0)
     model_name: Optional[str] = None
     timeout_seconds: int = Field(120, ge=10, le=600)
     max_retries: int = Field(2, ge=0, le=5)
@@ -41,7 +41,12 @@ class CustomServerHealthResponse(BaseModel):
     endpoint: str
     last_check: Optional[str] = None
     response_time: Optional[int] = None  # ms
-    model_loaded: Optional[str] = None
+    # VPS-specific fields from Ollama server
+    ollama_connected: Optional[bool] = None
+    model_loaded: Optional[bool] = None
+    model_name: Optional[str] = None
+    active_requests: Optional[int] = None
+    # Generic fields
     models_available: Optional[List[str]] = None
     gpu_available: Optional[bool] = None
     gpu_memory_usage: Optional[str] = None

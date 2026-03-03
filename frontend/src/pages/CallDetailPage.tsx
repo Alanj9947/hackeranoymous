@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useCall, useCallTranscript, useTriggerExtraction } from '@/hooks/use-api';
+import { useCall, useCallTranscript, useTriggerExtraction, useCallRecordingUrl } from '@/hooks/use-api';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -13,6 +13,7 @@ export default function CallDetailPage() {
   const { data: call, isLoading } = useCall(id);
   const { data: transcript } = useCallTranscript(id);
   const triggerExtraction = useTriggerExtraction();
+  const recordingUrl = useCallRecordingUrl(id);
 
   if (isLoading) return <PageLoader />;
   if (!call) return <p>Call not found</p>;
@@ -52,11 +53,11 @@ export default function CallDetailPage() {
             </div>
             <div>
               <p className="text-sm text-gray-500">From</p>
-              <p className="font-mono text-sm">{call.from_phone || '—'}</p>
+              <p className="font-mono text-sm">{call.from_number || '—'}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500">To</p>
-              <p className="font-mono text-sm">{call.to_phone || '—'}</p>
+              <p className="font-mono text-sm">{call.to_number || '—'}</p>
             </div>
           </div>
 
@@ -65,9 +66,9 @@ export default function CallDetailPage() {
             <div className="mt-4 pt-4 border-t">
               <p className="text-sm text-gray-500 mb-2">Recording</p>
               <div className="flex items-center gap-3">
-                <audio controls src={call.recording_url} className="flex-1" />
-                <a href={call.recording_url} download>
-                  <Button variant="outline" size="sm"><Download size={14} /></Button>
+                <audio controls src={recordingUrl} className="flex-1" />
+                <a href={recordingUrl} download={`recording-${call.id}.mp3`}>
+                  <Button variant="outline" size="sm"><Download size={14} className="mr-1" /> Download</Button>
                 </a>
               </div>
             </div>

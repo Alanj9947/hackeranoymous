@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { useCustomServerConfig, useSaveCustomServerConfig, useCustomServerHealth } from '@/hooks/use-api';
+import { useCustomServerConfig, useSaveCustomServerConfig, useCustomServerHealth, usePhoneNumbers, useAgents, useAssignPhoneNumber, useUnassignPhoneNumber } from '@/hooks/use-api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
-import { Server, Shield, RefreshCw, Save, Activity } from 'lucide-react';
+import { Server, Shield, RefreshCw, Save, Activity, Phone, Link2Off } from 'lucide-react';
 import { AxiosError } from 'axios';
 import toast from 'react-hot-toast';
 
@@ -13,6 +13,10 @@ export default function SettingsPage() {
   const { data: config, isLoading: configLoading } = useCustomServerConfig();
   const saveConfig = useSaveCustomServerConfig();
   const { data: health, isLoading: healthLoading, refetch: refetchHealth } = useCustomServerHealth();
+  const { data: phoneNumbers, isLoading: phoneLoading } = usePhoneNumbers();
+  const { data: agents } = useAgents();
+  const assignNumber = useAssignPhoneNumber();
+  const unassignNumber = useUnassignPhoneNumber();
 
   const [endpoint, setEndpoint] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -50,6 +54,9 @@ export default function SettingsPage() {
     }
   };
 
+  const agentList = agents || [];
+  const numberList = phoneNumbers || [];
+
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
@@ -61,10 +68,10 @@ export default function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Server size={18} /> Custom AI Server (VPS)
+            <Server size={18} /> Custom AI Server (VPS / Ollama)
           </CardTitle>
           <CardDescription>
-            Connect your dedicated AI server running Ollama + FastAPI for data extraction
+            Connect your dedicated AI server running Ollama + FastAPI. When configured, conversations and extraction will use this local model instead of OpenAI.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -73,9 +80,9 @@ export default function SettingsPage() {
             <Input
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
-              placeholder="https://your-vps-ip:8100"
+              placeholder="http://your-vps-ip:8100"
             />
-            <p className="text-xs text-gray-400 mt-1">Full URL to your VPS AI server</p>
+            <p className="text-xs text-gray-400 mt-1">Full URL to your VPS AI server (see vps_ai_server/)</p>
           </div>
 
           <div>
@@ -84,7 +91,7 @@ export default function SettingsPage() {
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={config ? '••••••• (leave blank to keep existing)' : 'your-api-key'}
+              placeholder={config ? '••••••• (leave blank to keep existing)' : 'your-api-key (optional)'}
             />
           </div>
 
@@ -95,6 +102,7 @@ export default function SettingsPage() {
               onChange={(e) => setModelName(e.target.value)}
               placeholder="llama3.1:8b"
             />
+            <p className="text-xs text-gray-400 mt-1">Ollama model name (e.g. llama3.1:8b, mistral:7b, gemma2:9b)</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -141,17 +149,19 @@ export default function SettingsPage() {
                 <Badge variant={health.status === 'healthy' ? 'success' : 'destructive'}>
                   {health.status}
                 </Badge>
-                <span className="text-sm text-gray-500">Response time: {health.response_time}ms</span>
+                {health.response_time != null && (
+                  <span className="text-sm text-gray-500">Response time: {health.response_time}ms</span>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-gray-500">Ollama Connected</p>
-                  <p className="font-medium">{health.ollama_connected ? 'Yes' : 'No'}</p>
+                  <p className="font-medium">{health.ollama_connected != null ? (health.ollama_connected ? 'Yes' : 'No') : '—'}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Model Loaded</p>
-                  <p className="font-medium">{health.model_loaded ? 'Yes' : 'No'}</p>
+                  <p className="font-medium">{health.model_loaded != null ? (health.model_loaded ? 'Yes' : 'No') : '—'}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Model</p>
@@ -170,6 +180,71 @@ export default function SettingsPage() {
           ) : (
             <div className="text-sm text-gray-500">
               {config ? 'Unable to reach server. Check the endpoint.' : 'No server configured yet.'}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Phone Numbers */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Phone size={18} /> Phone Numbers
+          </CardTitle>
+          <CardDescription>
+            Manage Twilio phone numbers and assign them to agents
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {phoneLoading ? (
+            <div className="flex items-center gap-2"><Spinner size={16} /> Loading...</div>
+          ) : numberList.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No phone numbers found. Add numbers in your Twilio console, then return here to assign them to agents.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {numberList.map((num) => (
+                <div key={num.sid} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div>
+                    <p className="font-mono font-medium">{num.phone_number}</p>
+                    <p className="text-xs text-gray-500">{num.friendly_name}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {num.assigned_agent_id ? (
+                      <>
+                        <Badge variant="success">
+                          {agentList.find((a: any) => a.id === num.assigned_agent_id)?.name || 'Assigned'}
+                        </Badge>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => unassignNumber.mutate(num.sid)}
+                          disabled={unassignNumber.isPending}
+                        >
+                          <Link2Off size={14} className="mr-1" /> Unassign
+                        </Button>
+                      </>
+                    ) : (
+                      <select
+                        className="h-8 rounded-md border border-gray-300 px-2 text-sm"
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            assignNumber.mutate({ sid: num.sid, agentId: e.target.value });
+                            e.target.value = '';
+                          }
+                        }}
+                      >
+                        <option value="">Assign to agent…</option>
+                        {agentList.map((a: any) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

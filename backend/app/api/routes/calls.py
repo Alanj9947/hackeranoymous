@@ -1,5 +1,5 @@
 """
-Call management routes: list, create (outbound), get, get transcript.
+Call management routes: list, create (outbound), get, get transcript, download recording.
 """
 
 from __future__ import annotations
@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,3 +125,59 @@ async def get_transcript(
     if not transcript:
         raise HTTPException(status_code=404, detail="Transcript not available yet")
     return TranscriptResponse.model_validate(transcript)
+
+
+@router.get("/{call_id}/recording")
+async def download_recording(
+    call_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    company_id: UUID = Depends(get_company_id),
+):
+    """Download or stream the recording for a call."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+
+    result = await db.execute(
+        select(Call).where(Call.id == call_id, Call.company_id == company_id)
+    )
+    call = result.scalar_one_or_none()
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    # If we have an S3 key, generate a presigned URL or stream from S3
+    if call.recording_s3_key:
+        try:
+            import boto3
+            from botocore.exceptions import ClientError
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=settings.S3_ENDPOINT,
+                aws_access_key_id=settings.S3_ACCESS_KEY,
+                aws_secret_access_key=settings.S3_SECRET_KEY,
+                region_name=settings.S3_REGION,
+            )
+            # Stream the object from S3
+            s3_obj = s3.get_object(Bucket=settings.S3_BUCKET_RECORDINGS, Key=call.recording_s3_key)
+            filename = f"recording_{call_id}.mp3"
+
+            def _stream():
+                for chunk in s3_obj["Body"].iter_chunks(chunk_size=65536):
+                    yield chunk
+
+            return StreamingResponse(
+                _stream(),
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not retrieve recording: {str(e)}")
+
+    # Fall back to redirecting to the Twilio recording URL
+    if call.recording_url:
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url=call.recording_url)
+
+    raise HTTPException(status_code=404, detail="No recording available for this call")
