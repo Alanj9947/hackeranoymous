@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
         health,
         conversation,
         phone_numbers,
+        twilio_webhooks,
     )
 
     app.include_router(health.router)
@@ -80,12 +81,13 @@ def create_app() -> FastAPI:
     app.include_router(custom_server.router, prefix="/api/v1")
     app.include_router(conversation.router, prefix="/api/v1")
     app.include_router(phone_numbers.router, prefix="/api/v1")
-    app.include_router(webhooks.router)  # no prefix – Twilio needs exact path
+    app.include_router(webhooks.router)  # legacy Twilio webhooks
+    app.include_router(twilio_webhooks.router)  # enhanced inbound call handling
 
-    # ── WebSocket for media streaming ──────────────────────
-    from app.services.media_stream import media_stream_ws
+    # ── WebSocket for phone media streaming ──────────────────────
+    from app.services.phone_media_stream import phone_media_stream_ws
 
-    app.add_api_websocket_route("/ws/media-stream/{call_id}", media_stream_ws)
+    app.add_api_websocket_route("/ws/media-stream/{call_id}", phone_media_stream_ws)
 
     return app
 
