@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
         predictions,
         coaching,
         alerts,
+        reports,
     )
 
     app.include_router(health.router)
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(phone_numbers.router, prefix="/api/v1")
     app.include_router(analytics.router, prefix="/api/v1")
     app.include_router(alerts.router)  # alerts endpoints
+    app.include_router(reports.router)  # reports endpoints
     app.include_router(analytics_ws.router)  # analytics WebSocket endpoint
     app.include_router(predictions.router)  # predictions endpoints
     app.include_router(coaching.router)  # coaching endpoints
