@@ -82,6 +82,7 @@ def create_app() -> FastAPI:
         knowledge_base,
         sms,
         forecasting,
+        workflows,
     )
 
     app.include_router(health.router)
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_base.router)  # knowledge base endpoints
     app.include_router(sms.router)  # SMS integration endpoints
     app.include_router(forecasting.router)  # ML forecasting endpoints
+    app.include_router(workflows.router)  # workflow automation endpoints
     app.include_router(analytics_ws.router)  # analytics WebSocket endpoint
     app.include_router(predictions.router)  # predictions endpoints
     app.include_router(coaching.router)  # coaching endpoints
