@@ -71,6 +71,7 @@ def create_app() -> FastAPI:
         phone_numbers,
         twilio_webhooks,
         analytics,
+        analytics_ws,
         predictions,
         coaching,
     )
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(conversation.router, prefix="/api/v1")
     app.include_router(phone_numbers.router, prefix="/api/v1")
     app.include_router(analytics.router, prefix="/api/v1")
+    app.include_router(analytics_ws.router)  # analytics WebSocket endpoint
     app.include_router(predictions.router)  # predictions endpoints
     app.include_router(coaching.router)  # coaching endpoints
     app.include_router(webhooks.router)  # legacy Twilio webhooks
