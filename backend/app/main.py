@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
         reports,
         quality,
         crm,
+        ticketing,
     )
 
     app.include_router(health.router)
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(reports.router)  # reports endpoints
     app.include_router(quality.router)  # quality scoring endpoints
     app.include_router(crm.router)  # CRM integration endpoints
+    app.include_router(ticketing.router)  # ticketing integration endpoints
     app.include_router(analytics_ws.router)  # analytics WebSocket endpoint
     app.include_router(predictions.router)  # predictions endpoints
     app.include_router(coaching.router)  # coaching endpoints
