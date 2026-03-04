@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
         conversation,
         phone_numbers,
         twilio_webhooks,
+        analytics,
     )
 
     app.include_router(health.router)
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(custom_server.router, prefix="/api/v1")
     app.include_router(conversation.router, prefix="/api/v1")
     app.include_router(phone_numbers.router, prefix="/api/v1")
+    app.include_router(analytics.router, prefix="/api/v1")
     app.include_router(webhooks.router)  # legacy Twilio webhooks
     app.include_router(twilio_webhooks.router)  # enhanced inbound call handling
 
